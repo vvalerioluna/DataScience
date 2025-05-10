@@ -1,0 +1,135 @@
+# Cargar librerías necesarias
+# Instala estas librerías si no las tienes:
+install.packages(c("shiny", "dplyr", "ggplot2", "lubridate", "DT"),dependencies = T)
+library(shiny)
+library(dplyr)
+library(ggplot2)
+library(lubridate) # Para manejar fechas fácilmente
+library(DT)      # Importante: Cargar la librería DT
+
+# --- Generación de Datos Ejemplo (NO son datos reales) ---
+
+# Alcaldías de la CDMX (ejemplo, no todas)
+alcaldias_cdmx <- c(
+  "Álvaro Obregón", "Azcapotzalco", "Benito Juárez", "Coyoacán",
+  "Cuajimalpa de Morelos", "Cuauhtémoc", "Gustavo A. Madero",
+  "Iztacalco", "Iztapalapa", "La Magdalena Contreras",
+  "Miguel Hidalgo", "Milpa Alta", "Tláhuac", "Tlalpan",
+  "Venustiano Carranza", "Xochimilco"
+)
+
+# Tipos de delito (ejemplo)
+tipos_delito <- c(
+  "Robo a transeúnte", "Robo de vehículo", "Homicidio doloso",
+  "Lesiones dolosas por arma de fuego", "Robo a casa habitación",
+  "Violencia familiar", "Narcomenudeo", "Fraude", "Secuestro"
+)
+
+# Generar fechas aleatorias en un rango (ejemplo: último año)
+fecha_inicio <- today() - years(1)
+fecha_fin <- today()
+num_registros <- 15000 # Número de incidentes ejemplo
+
+set.seed(123) # Para hacer los datos generados reproducibles
+
+datos_delito_ejemplo <- data.frame(
+  Fecha = sample(seq(fecha_inicio, fecha_fin, by = "day"), num_registros, replace = TRUE),
+  Alcaldia = sample(alcaldias_cdmx, num_registros, replace = TRUE, prob = c(0.05, 0.05, 0.07, 0.06, 0.03, 0.08, 0.09, 0.04, 0.10, 0.02, 0.07, 0.01, 0.03, 0.06, 0.05, 0.04)), # Probabilidades para simular diferencias (ejemplo)
+  Tipo_Delito = sample(tipos_delito, num_registros, replace = TRUE, prob = c(0.15, 0.12, 0.05, 0.08, 0.07, 0.20, 0.10, 0.15, 0.08)) # Probabilidades por tipo (ejemplo)
+)
+
+# --- Interfaz de Usuario (UI) ---
+ui <- fluidPage(
+  # Título de la aplicación
+  titlePanel("Visualización de Incidencia Delictiva (Datos Ejemplo)"),
+  
+  # Diseño con barra lateral y panel principal
+  sidebarLayout(
+    sidebarPanel(
+      # Input: Rango de fechas
+      dateRangeInput(
+        inputId = "dates",
+        label = "Selecciona el rango de fechas:",
+        start = fecha_inicio,
+        end = fecha_fin,
+        min = fecha_inicio,
+        max = fecha_fin
+      ),
+      
+      # Input: Seleccionar Alcaldías
+      checkboxGroupInput(
+        inputId = "alcaldias",
+        label = "Selecciona Alcaldías:",
+        choices = sort(unique(datos_delito_ejemplo$Alcaldia)),
+        selected = sort(unique(datos_delito_ejemplo$Alcaldia)) # Seleccionar todas por defecto
+      ),
+      
+      # Input: Seleccionar Tipos de Delito
+      checkboxGroupInput(
+        inputId = "crimetypes",
+        label = "Selecciona Tipos de Delito:",
+        choices = sort(unique(datos_delito_ejemplo$Tipo_Delito)),
+        selected = sort(unique(datos_delito_ejemplo$Tipo_Delito)) # Seleccionar todos por defecto
+      )
+    ),
+    
+    # Panel principal para mostrar resultados
+    mainPanel(
+      h4("Total de Delitos por Alcaldía (en el período y filtros seleccionados)"),
+      # Output: Gráfico
+      plotOutput("crimePlot"),
+      
+      h4("Datos Resumidos"),
+      # Output: Tabla de datos (usando DT::DTOutput)
+      DT::DTOutput("crimeTable") # Modificado para usar DT
+    )
+  )
+)
+
+# --- Lógica del Servidor ---
+server <- function(input, output, session) {
+  
+  # Filtrar datos basándose en las selecciones del usuario
+  filtered_data <- reactive({
+    datos_delito_ejemplo %>%
+      filter(
+        Fecha >= input$dates[1],
+        Fecha <= input$dates[2],
+        Alcaldia %in% input$alcaldias,
+        Tipo_Delito %in% input$crimetypes
+      )
+  })
+  
+  # Resumir datos: Contar incidentes por Alcaldía
+  summarized_data <- reactive({
+    req(nrow(filtered_data()) > 0) # Asegura que haya datos después del filtro
+    filtered_data() %>%
+      group_by(Alcaldia) %>%
+      summarise(Total_Incidentes = n()) %>%
+      arrange(desc(Total_Incidentes))
+  })
+  
+  # Renderizar el gráfico de barras
+  output$crimePlot <- renderPlot({
+    req(nrow(summarized_data()) > 0) # Asegura que haya datos para graficar
+    ggplot(summarized_data(), aes(x = reorder(Alcaldia, -Total_Incidentes), y = Total_Incidentes, fill = Alcaldia)) +
+      geom_bar(stat = "identity") +
+      labs(
+        title = "Total de Incidentes por Alcaldía",
+        x = "Alcaldía",
+        y = "Número de Incidentes"
+      ) +
+      theme_minimal() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1)) + # Rota etiquetas del eje x
+      guides(fill = FALSE) # Ocultar la leyenda de color si hay muchas alcaldías
+  })
+  
+  # Renderizar la tabla de datos (usando DT::renderDT)
+  output$crimeTable <- DT::renderDT({ # Modificado para usar DT
+    req(nrow(summarized_data()) > 0) # Asegura que haya datos para la tabla
+    summarized_data()
+  }, options = list(pageLength = 10)) # Opcional: configurar opciones de la tabla, ej. paginación
+}
+
+# --- Correr la Aplicación Shiny ---
+shinyApp(ui = ui, server = server)
